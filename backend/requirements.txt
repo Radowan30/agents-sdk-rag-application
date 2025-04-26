@@ -1,0 +1,27 @@
+# Core web framework
+fastapi>=0.115.8
+uvicorn>=0.34.0
+websockets>=15.0
+python-multipart>=0.0.20
+
+# Async HTTP client
+httpx>=0.25.0
+
+# AI and ML tools
+openai>=1.6.0
+
+# Data validation and settings
+pydantic>=2.5.0
+pydantic-settings>=2.8.0
+typing-extensions>=4.8.0
+
+# Environment variables
+python-dotenv>=1.0.0
+
+# Instrumentation
+opentelemetry-instrumentation-sqlite3>=0.51b0
+
+# Development tools
+devtools>=0.12.2
+
+
