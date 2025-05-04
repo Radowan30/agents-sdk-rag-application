@@ -11,9 +11,6 @@ function PromptForm(){
     const [messages, setMessages] = useState([]);
     // Use a ref to persist the websocket connection across renders.
     const websocketRef = useRef(null);
-    // //States and references to implement a workaround to prevent showing user message and video message twice upon reloading the page
-    // const prevVideoContentRef = useRef('');
-    // const prevUserContentRef = useRef('');
 
     // Create the websocket connection once when the component mounts.
     useEffect( () => {
@@ -44,10 +41,6 @@ function PromptForm(){
                     });
                 }
                 else {
-                    // if(prevUserContentRef.current === data.content){
-                    //   return;
-                    // }
-                    // prevUserContentRef.current = data.content;
                     setMessages(prev => [...prev, data]);
                 }
             } catch (error) {
@@ -71,8 +64,6 @@ function PromptForm(){
         setIsLoading(true);
         e.preventDefault();
 
-        // setMessages(prev => [...prev, {role: 'user', content: prompt}]);
-
         if (websocketRef.current && websocketRef.current.readyState === WebSocket.OPEN){
             websocketRef.current.send(prompt);
         } else {
@@ -91,10 +82,7 @@ function PromptForm(){
         {messages.map((message, index) => {
           // Align user messages to the right and others to the left
           const alignment = message.role === 'user' ? 'items-end' : 'items-start';
-          // Skipping rendering messages that include "Title" in user messages to not show extra information provided by the Web Search tool
-          if(message.role === 'user' && JSON.stringify(message.content).includes("Title")){
-            return null;
-          }
+
           return (
             <div key={index} className={`flex flex-col ${alignment} mb-4`}>
               <span className="mb-1 text-s font-bold text-gray-700">
