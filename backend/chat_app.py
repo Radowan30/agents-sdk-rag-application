@@ -30,13 +30,6 @@ THIS_DIR = Path(__file__).parent
 UPLOADS_DIR = THIS_DIR / "uploads"
 
 
-# @asynccontextmanager
-# async def lifespan(_app: fastapi.FastAPI):
-#     async with Database.connect() as db:
-#         _app.state.db = db
-#         yield {'db': db}
-
-
 app = fastapi.FastAPI()
 
 
