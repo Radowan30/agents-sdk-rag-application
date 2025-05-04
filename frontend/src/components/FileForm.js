@@ -30,10 +30,8 @@ function FileForm () {
       })
 
       if (response.ok){
-        console.log("File uploaded successfully");
         setUploadState("File uploaded successfully!");
       } else {
-        console.error("File upload failed");
         setUploadState("File upload failed");
       }
     } catch (error) {
@@ -56,7 +54,7 @@ function FileForm () {
           type="file"
           onChange={handleFileInputChange}
           ref={fileInputRef}
-          accept="application/msword, application/vnd.openxmlformats-officedocument.wordprocessingml.document, text/html, application/json, text/markdown, application/pdf, text/plain" 
+          accept="application/msword, application/vnd.openxmlformats-officedocument.wordprocessingml.document, text/html, application/json, text/markdown, application/pdf, text/plain, .xlsx, .xls" 
           className="relative m-0 block w-full min-w-0 flex-auto cursor-pointer rounded border border-solid border-neutral-300 bg-clip-padding px-3 py-[0.32rem] text-xs font-normal text-neutral-700 transition duration-300 ease-in-out file:-mx-3 file:-my-[0.32rem] file:cursor-pointer file:overflow-hidden file:rounded-none file:border-0 file:border-solid file:border-inherit file:bg-neutral-100 file:px-3 file:py-[0.32rem] file:text-neutral-700 file:transition file:duration-150 file:ease-in-out file:[border-inline-end-width:1px] file:[margin-inline-end:0.75rem] hover:file:bg-blue-600 focus:border-primary focus:text-neutral-700 focus:shadow-te-primary focus:outline-none dark:border-neutral-600 dark:text-neutral-500 dark:file:bg-neutral-700 dark:file:text-neutral-100 dark:focus:border-primary"
         />
         <button 

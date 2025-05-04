@@ -4,6 +4,7 @@
 /backend/venv
 /backend/.env
 /backend/__pycache__
+/backend/uploads/*
 
 #Frontend files to ignore
 # dependencies

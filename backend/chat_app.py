@@ -14,14 +14,20 @@ from httpx import AsyncClient
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 from typing import Any, Dict, Union
-from agents import Agent, Runner, TResponseInputItem
+from agents import Agent, Runner, TResponseInputItem, FileSearchTool
 from openai.types.responses import ResponseTextDeltaEvent
 from openai import OpenAI
+import requests
+from io import BytesIO
+import os
+import asyncio
+from starlette.websockets import WebSocketDisconnect
+from markitdown import MarkItDown
 
 load_dotenv()
 
-
 THIS_DIR = Path(__file__).parent
+UPLOADS_DIR = THIS_DIR / "uploads"
 
 
 # @asynccontextmanager
@@ -49,204 +55,141 @@ app.add_middleware(
 
 client = OpenAI()
 
-agent = Agent(name="Assistant", instructions="You are a helpful assistant")
+Vector_store_id = os.getenv("VECTOR_STORE_ID")
 
-# result = Runner.run_sync(agent, "Write a haiku about recursion in programming.")
-# print(result.final_output)
+agent = Agent(
+    name="Assistant", 
+    instructions="""You are a helpful assistant. User's can upload files to your system. If there aren't any 'You uploaded a file called...' messages in your conversation history, then you should assume that the user hasn't uploaded any files yet. 
+    You can encourage the user to upload files if they desire, and they can ask questions about their documents. If the user uploads a file, you can answer questions based on it. Otherwise, maintain normal conversation.""",
+    tools = [
+        FileSearchTool(
+            max_num_results=3,
+            vector_store_ids=[Vector_store_id],
+        )
+    ])
 
+
+events_queue = asyncio.Queue() # Queue to handle file upload events
 
 @app.websocket('/async_chat')
 async def async_chat(websocket: WebSocket):
     await websocket.accept()
-    # # Get the DB instance from the app state
-    # database: Database = websocket.app.state.db
 
-    # # Send previous chat messages to the client.
-    # previous_msgs = await database.get_messages()
-    # for m in previous_msgs:
-    #     await websocket.send_text(json.dumps(to_chat_message(m)))
     convo: list[TResponseInputItem] = [] #For having conversational memeory
-    
-    while True:
-        try:
+
+    async def message_handler():
+        while True:
             # Wait for a new prompt from the client.
-            prompt = await websocket.receive_text()
-            
-            # Immediately send back the user prompt.
-            await websocket.send_text(
-                json.dumps({
-                    'role': 'user',
-                    'timestamp': datetime.now(tz=timezone.utc).isoformat(),
-                    'content': prompt,
-                })
-            )
-            
-            async with AsyncClient() as client:
-                
-                convo.append({"content": prompt, "role": "user"})
-
-                result = Runner.run_streamed(agent, convo)
-
-                # Stream messages from the agent.
-                # async with agent.run_stream(prompt, message_history=messages, deps=deps) as result:
-                    
-                #     async for text in result.stream(debounce_by=0.01):
-                #         m = ModelResponse(parts=[TextPart(text)], timestamp=result.timestamp())
-                #         await websocket.send_text(
-                #             json.dumps(to_chat_message(m))
-                #         )
-                response_parts = ""
-                async for event in result.stream_events():
-                    if event.type == "raw_response_event" and isinstance(event.data, ResponseTextDeltaEvent):
-                        # print(event.data.delta, end="", flush=True)
-                        response_parts += event.data.delta
-                        await websocket.send_text(
-                            json.dumps({
-                                'role': 'model',
-                                'timestamp': datetime.now(tz=timezone.utc).isoformat(),
-                                'content': response_parts,
-                            })
-                        )
-                        
-                convo = result.to_input_list()
-                #     await database.add_messages(result.new_messages_json())
-
+            msg = await websocket.receive_text()
+            await events_queue.put({"type": "message", "content": msg})
     
-                # await database.add_messages(result.new_messages_json())
-        except Exception as e:
-            await websocket.send_text(
-                json.dumps({
-                    'role': 'model',
-                    'timestamp': datetime.now(tz=timezone.utc).isoformat(),
-                    'content': f"An error occurred: {e}",
-                })
-            )
-            break
+    #Start the message handler task in the background
+    message_task = asyncio.create_task(message_handler())
 
-    await websocket.close()
+    try:
+
+        while True:
+            event = await events_queue.get()
+
+            if event["type"] == "file":
+                filename = event["filename"]
+                file_uploaded_msg = f"You uploaded a file called '{filename}'"
+                await websocket.send_text(
+                    json.dumps({
+                        'role': 'file_upload',
+                        'timestamp': datetime.now(tz=timezone.utc).isoformat(),
+                        'content': file_uploaded_msg,
+                    })
+                )
+                convo.append({"content": file_uploaded_msg, "role": "assistant"})
+            
+            elif event["type"] == "message":
+                prompt = event["content"]
+
+                # Immediately send back the user prompt.
+                await websocket.send_text(
+                    json.dumps({
+                        'role': 'user',
+                        'timestamp': datetime.now(tz=timezone.utc).isoformat(),
+                        'content': prompt,
+                    })
+                )
+            
+                async with AsyncClient() as client:
+                    
+                    convo.append({"content": prompt, "role": "user"})
+
+                    result = Runner.run_streamed(agent, convo)
+
+                    response_parts = ""
+                    async for event in result.stream_events():
+                        if event.type == "raw_response_event" and isinstance(event.data, ResponseTextDeltaEvent):
+                            # print(event.data.delta, end="", flush=True)
+                            response_parts += event.data.delta
+                            await websocket.send_text(
+                                json.dumps({
+                                    'role': 'model',
+                                    'timestamp': datetime.now(tz=timezone.utc).isoformat(),
+                                    'content': response_parts,
+                                })
+                            )
+                            
+                    convo = result.to_input_list()
+    
+    except WebSocketDisconnect:
+        await websocket.close()
+
+    except Exception as e:
+        await websocket.send_text(
+            json.dumps({
+                'role': 'model',
+                'timestamp': datetime.now(tz=timezone.utc).isoformat(),
+                'content': f"An error occurred: {e}",
+            })
+        )
+        message_task.cancel()
+    
+        
+
 
 @app.post('/uploadflie/')
 async def create_upload_file(file_upload: UploadFile):
 
     data = await file_upload.read()
-    save_to = THIS_DIR / 'uploads' / file_upload.filename
-    with open(save_to, 'wb') as f:
+    file_saved_at = UPLOADS_DIR / file_upload.filename
+    with open(file_saved_at, 'wb') as f:
         f.write(data)
+
+
+    file_to_upload = Path(file_saved_at)
+
+    # Convert Excel file to Markdown if the file is an Excel file
+    if file_to_upload.suffix == ".xlsx" or file_to_upload.suffix == ".xls":
+        md = MarkItDown(enable_plugins=False) # Set to True to enable plugins
+        result = md.convert(file_saved_at)
+        md_file_saved_at = UPLOADS_DIR / (file_to_upload.stem + ".md") 
+        with open(md_file_saved_at, 'w') as f:
+            f.write(result.text_content)
+
+        file_to_upload = Path(md_file_saved_at)
+
+    # Upload file to vector store
+    with open(UPLOADS_DIR / file_to_upload.name, "rb") as file_content:
+        result = client.files.create(
+            file=file_content,
+            purpose="assistants"
+        )
     
+    client.vector_stores.files.create(
+        vector_store_id=Vector_store_id,
+        file_id=result.id
+    )
+    
+    # Add the file upload event to the asyncio queue
+    await events_queue.put({"type": "file", "filename": file_upload.filename})
+
     return {"filenames": file_upload.filename}
 
-# async def get_db(request: Request) -> Database:
-#     return request.state.db
-
-
-
-# class ChatMessage(TypedDict):
-#     """Format of messages sent to the browser."""
-
-#     role: Literal['user', 'model', 'video']
-#     timestamp: str
-#     content: str
-
-
-# # def to_chat_message(m: ModelMessage) -> ChatMessage:
-# #     first_part = m.parts[0]
-# #     if isinstance(m, ModelRequest):
-# #         if isinstance(first_part, UserPromptPart):
-# #             assert isinstance(first_part.content, str)
-# #             return {
-# #                 'role': 'user',
-# #                 'timestamp': first_part.timestamp.isoformat(),
-# #                 'content': first_part.content,
-# #             }
-# #     elif isinstance(m, ModelResponse):
-# #         if isinstance(first_part, TextPart):
-# #             content = first_part.content.strip()
-
-# #             return {
-# #                 'role': 'model',
-# #                 'timestamp': m.timestamp.isoformat(),
-# #                 'content': content,
-# #             }
- 
-
-# P = ParamSpec('P')
-# R = TypeVar('R')
-
-
-# @dataclass
-# class Database:
-#     """Rudimentary database to store chat messages in SQLite.
-
-#     The SQLite standard library package is synchronous, so we
-#     use a thread pool executor to run queries asynchronously.
-#     """
-
-#     con: sqlite3.Connection
-#     _loop: asyncio.AbstractEventLoop
-#     _executor: ThreadPoolExecutor
-
-#     @classmethod
-#     @asynccontextmanager
-#     async def connect(
-#         cls, file: Path = THIS_DIR / '.chat_app_messages.sqlite'
-#     ) -> AsyncIterator[Database]:
-#         with logfire.span('connect to DB'):
-#             loop = asyncio.get_event_loop()
-#             executor = ThreadPoolExecutor(max_workers=1)
-#             con = await loop.run_in_executor(executor, cls._connect, file)
-#             slf = cls(con, loop, executor)
-#         try:
-#             yield slf
-#         finally:
-#             await slf._asyncify(con.close)
-
-#     @staticmethod
-#     def _connect(file: Path) -> sqlite3.Connection:
-#         con = sqlite3.connect(str(file))
-#         con = logfire.instrument_sqlite3(con)
-#         cur = con.cursor()
-#         cur.execute(
-#             'CREATE TABLE IF NOT EXISTS messages (id INT PRIMARY KEY, message_list TEXT);'
-#         )
-#         con.commit()
-#         return con
-
-#     async def add_messages(self, messages: bytes):
-#         await self._asyncify(
-#             self._execute,
-#             'INSERT INTO messages (message_list) VALUES (?);',
-#             messages,
-#             commit=True,
-#         )
-#         await self._asyncify(self.con.commit)
-
-#     async def get_messages(self) -> list[ModelMessage]:
-#         c = await self._asyncify(
-#             self._execute, 'SELECT message_list FROM messages order by id'
-#         )
-#         rows = await self._asyncify(c.fetchall)
-#         messages: list[ModelMessage] = []
-#         for row in rows:
-#             messages.extend(ModelMessagesTypeAdapter.validate_json(row[0]))
-#         return messages
-
-#     def _execute(
-#         self, sql: LiteralString, *args: Any, commit: bool = False
-#     ) -> sqlite3.Cursor:
-#         cur = self.con.cursor()
-#         cur.execute(sql, args)
-#         if commit:
-#             self.con.commit()
-#         return cur
-
-#     async def _asyncify(
-#         self, func: Callable[P, R], *args: P.args, **kwargs: P.kwargs
-#     ) -> R:
-#         return await self._loop.run_in_executor(  # type: ignore
-#             self._executor,
-#             partial(func, **kwargs),
-#             *args,  # type: ignore
-#         )
 
 
 if __name__ == '__main__':

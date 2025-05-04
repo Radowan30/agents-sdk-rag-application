@@ -86,7 +86,7 @@ function PromptForm(){
       {/* Fixed Conversation Area: starts right below the header and above the prompt input */}
       <div 
         id="conversation" 
-        className="fixed top-20 bottom-16 left-0 right-0 max-w-4xl mx-auto px-4 overflow-y-auto pt-4"
+        className="fixed top-20 bottom-32 left-0 right-0 max-w-4xl mx-auto px-4 overflow-y-auto pt-4"
       >
         {messages.map((message, index) => {
           // Align user messages to the right and others to the left
@@ -102,6 +102,8 @@ function PromptForm(){
               </span>
               <div className="max-w-md bg-white p-4 rounded-lg shadow-md text-left">
                 {message.role === 'user' ? (
+                  <p>{message.content}</p>
+                ) : message.role === 'file_upload'? (
                   <p>{message.content}</p>
                 ) : (
                   <ReactMarkdown
